@@ -1,13 +1,48 @@
-# Sample Hardhat Project
+# Nocena Core
 
-This project demonstrates a basic Hardhat use case. It comes with a sample contract, a test for that contract, and a Hardhat Ignition module that deploys that contract.
+Smart contracts for the Nocena challenge completion platform.
 
-Try running some of the following tasks:
+## Setup
 
-```shell
-npx hardhat help
+```bash
+npm install
+npx hardhat compile
 npx hardhat test
-REPORT_GAS=true npx hardhat test
-npx hardhat node
-npx hardhat ignition deploy ./ignition/modules/Lock.js
+```
+
+## Contracts
+
+### Nocenite (NCT)
+ERC20 token earned through challenge completions.
+- **Symbol:** NCT
+- **Decimals:** 18
+- **Minting:** Authorized minter only
+- **Ownership:** Renounceable after minter set
+
+### ChallengeRewards
+Manages reward distribution for AI-verified challenges.
+- **Daily:** 100 NCT (24h cooldown)
+- **Weekly:** 500 NCT (7d cooldown) 
+- **Monthly:** 2500 NCT (30d cooldown)
+- **Security:** Backend-signed proofs, replay protection
+
+## Usage
+
+```solidity
+// Complete daily challenge
+challengeRewards.completeDailyChallenge(ipfsHash, signature);
+
+// Complete weekly challenge  
+challengeRewards.completeWeeklyChallenge(ipfsHash, signature);
+
+// Complete monthly challenge
+challengeRewards.completeMonthlyChallenge(ipfsHash, signature);
+```
+
+## Testing
+
+```bash
+npx hardhat test                    # Run all tests
+npx hardhat test test/Nocenite.test.js     # Test NCT token
+npx hardhat test test/ChallengeRewards.test.js  # Test rewards
 ```
