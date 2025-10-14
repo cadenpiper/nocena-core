@@ -11,10 +11,10 @@ import "./Nocenite.sol";
  * @title ChallengeRewards
  * @dev Manages reward distribution for Nocena platform challenge completions
  * 
- * Users earn NCT tokens by completing AI-verified challenges with backend-signed proofs.
+ * Users earn NCT tokens by completing AI-verified challenges with relayer-signed proofs.
  * Supports daily (100 NCT), weekly (500 NCT), and monthly (2500 NCT) challenges.
  * Each challenge type has independent cooldown periods to prevent abuse.
- * Backend signer can be rotated by owner for security purposes.
+ * Relayer can be rotated by owner for security purposes.
  */
 contract ChallengeRewards is Ownable, ReentrancyGuard {
     using ECDSA for bytes32;
@@ -26,12 +26,14 @@ contract ChallengeRewards is Ownable, ReentrancyGuard {
     error EmptyIPFSHash();
     error InvalidSignatureLength();
     error ZeroAddress();
+    error NotRelayer();
+    error IPFSHashAlreadyUsed();
     
     /// @dev The NCT token contract for minting rewards
     Nocenite public immutable nocenite;
     
-    /// @dev Address authorized to sign challenge completion proofs
-    address public backendSigner;
+    /// @dev Address authorized to relay signed challenge completion proofs
+    address public relayer;
     
     /// @dev Reward amount for daily challenges (100 NCT)
     uint256 public constant DAILY_REWARD = 100e18;
@@ -57,51 +59,63 @@ contract ChallengeRewards is Ownable, ReentrancyGuard {
     /// @dev Prevents signature replay attacks by tracking used signature hashes
     mapping(bytes32 => bool) public usedSignatures;
     
+    /// @dev Prevents reusing the same IPFS hash across users and challenge types
+    mapping(bytes32 => bool) public usedIPFSHashes;
+    
     /// @dev Emitted when a user successfully completes a challenge
     event ChallengeCompleted(address indexed user, string indexed challengeType, uint256 reward, string ipfsHash);
     
-    /// @dev Emitted when the backend signer is updated by owner
-    event BackendSignerUpdated(address indexed oldSigner, address indexed newSigner);
+    /// @dev Emitted when the relayer is updated by owner
+    event RelayerUpdated(address indexed oldRelayer, address indexed newRelayer);
+    
+    /// @dev Restricts functions to be callable only by the relayer
+    modifier onlyRelayer() {
+        if (msg.sender != relayer) revert NotRelayer();
+        _;
+    }
     
     /**
      * @dev Initializes the ChallengeRewards contract
      * @param _nocenite Address of the NCT token contract
-     * @param _backendSigner Address authorized to sign challenge completion proofs
+     * @param _relayer Address authorized to relay challenge completion proofs
      * @param initialOwner Address that will own the contract initially
      */
-    constructor(address _nocenite, address _backendSigner, address initialOwner) Ownable(initialOwner) {
-        if (_nocenite == address(0) || _backendSigner == address(0)) {
+    constructor(address _nocenite, address _relayer, address initialOwner) Ownable(initialOwner) {
+        if (_nocenite == address(0) || _relayer == address(0)) {
             revert ZeroAddress();
         }
         nocenite = Nocenite(_nocenite);
-        backendSigner = _backendSigner;
+        relayer = _relayer;
     }
     
     /**
-     * @dev Completes a daily challenge and mints 100 NCT tokens
+     * @dev Completes a daily challenge for a user and mints 100 NCT tokens
+     * @param user Address of the user who completed the challenge
      * @param ipfsHash IPFS hash of the challenge completion proof
-     * @param signature Backend signature verifying challenge completion
+     * @param signature Relayer signature verifying challenge completion
      */
-    function completeDailyChallenge(string calldata ipfsHash, bytes calldata signature) external nonReentrant {
-        _completeChallenge("daily", DAY_DURATION, DAILY_REWARD, ipfsHash, signature);
+    function completeDailyChallenge(address user, string calldata ipfsHash, bytes calldata signature) external nonReentrant onlyRelayer {
+        _completeChallenge(user, "daily", DAY_DURATION, DAILY_REWARD, ipfsHash, signature);
     }
     
     /**
-     * @dev Completes a weekly challenge and mints 500 NCT tokens
+     * @dev Completes a weekly challenge for a user and mints 500 NCT tokens
+     * @param user Address of the user who completed the challenge
      * @param ipfsHash IPFS hash of the challenge completion proof
-     * @param signature Backend signature verifying challenge completion
+     * @param signature Relayer signature verifying challenge completion
      */
-    function completeWeeklyChallenge(string calldata ipfsHash, bytes calldata signature) external nonReentrant {
-        _completeChallenge("weekly", WEEK_DURATION, WEEKLY_REWARD, ipfsHash, signature);
+    function completeWeeklyChallenge(address user, string calldata ipfsHash, bytes calldata signature) external nonReentrant onlyRelayer {
+        _completeChallenge(user, "weekly", WEEK_DURATION, WEEKLY_REWARD, ipfsHash, signature);
     }
     
     /**
-     * @dev Completes a monthly challenge and mints 2500 NCT tokens
+     * @dev Completes a monthly challenge for a user and mints 2500 NCT tokens
+     * @param user Address of the user who completed the challenge
      * @param ipfsHash IPFS hash of the challenge completion proof
-     * @param signature Backend signature verifying challenge completion
+     * @param signature Relayer signature verifying challenge completion
      */
-    function completeMonthlyChallenge(string calldata ipfsHash, bytes calldata signature) external nonReentrant {
-        _completeChallenge("monthly", MONTH_DURATION, MONTHLY_REWARD, ipfsHash, signature);
+    function completeMonthlyChallenge(address user, string calldata ipfsHash, bytes calldata signature) external nonReentrant onlyRelayer {
+        _completeChallenge(user, "monthly", MONTH_DURATION, MONTHLY_REWARD, ipfsHash, signature);
     }
     
     /**
@@ -110,9 +124,10 @@ contract ChallengeRewards is Ownable, ReentrancyGuard {
      * @param duration Cooldown duration for this challenge type
      * @param reward Amount of NCT tokens to mint as reward
      * @param ipfsHash IPFS hash of the challenge completion proof
-     * @param signature Backend signature verifying challenge completion
+     * @param signature Relayer signature verifying challenge completion
      */
     function _completeChallenge(
+        address user,
         string memory challengeType,
         uint256 duration,
         uint256 reward,
@@ -121,25 +136,31 @@ contract ChallengeRewards is Ownable, ReentrancyGuard {
     ) internal {
         if (bytes(ipfsHash).length == 0) revert EmptyIPFSHash();
         if (signature.length != 65) revert InvalidSignatureLength();
-        if (block.timestamp < lastClaim[msg.sender][challengeType] + duration) revert CooldownActive();
+        if (user == address(0)) revert ZeroAddress();
+        if (block.timestamp < lastClaim[user][challengeType] + duration) revert CooldownActive();
         
-        _verifyCompletion(msg.sender, challengeType, ipfsHash, signature);
+        _verifyCompletion(user, challengeType, ipfsHash, signature);
         
-        lastClaim[msg.sender][challengeType] = block.timestamp;
-        nocenite.mint(msg.sender, reward);
+        // Prevent global reuse of the same IPFS hash across all users/types
+        bytes32 ipfsKey = keccak256(bytes(ipfsHash));
+        if (usedIPFSHashes[ipfsKey]) revert IPFSHashAlreadyUsed();
+        usedIPFSHashes[ipfsKey] = true;
         
-        emit ChallengeCompleted(msg.sender, challengeType, reward, ipfsHash);
+        lastClaim[user][challengeType] = block.timestamp;
+        nocenite.mint(user, reward);
+        
+        emit ChallengeCompleted(user, challengeType, reward, ipfsHash);
     }
     
     /**
-     * @dev Updates the backend signer address (owner only)
-     * @param newSigner New address authorized to sign challenge completion proofs
+     * @dev Updates the relayer address (owner only)
+     * @param newRelayer New address authorized to relay challenge completion proofs
      */
-    function updateBackendSigner(address newSigner) external onlyOwner {
-        if (newSigner == address(0)) revert ZeroAddress();
-        address oldSigner = backendSigner;
-        backendSigner = newSigner;
-        emit BackendSignerUpdated(oldSigner, newSigner);
+    function updateRelayer(address newRelayer) external onlyOwner {
+        if (newRelayer == address(0)) revert ZeroAddress();
+        address oldRelayer = relayer;
+        relayer = newRelayer;
+        emit RelayerUpdated(oldRelayer, newRelayer);
     }
     
     /**
@@ -147,7 +168,7 @@ contract ChallengeRewards is Ownable, ReentrancyGuard {
      * @param user Address of the user completing the challenge
      * @param challengeType Type of challenge being completed
      * @param ipfsHash IPFS hash of the challenge completion proof
-     * @param signature Backend signature to verify
+     * @param signature Relayer signature to verify
      */
     function _verifyCompletion(
         address user,
@@ -159,7 +180,7 @@ contract ChallengeRewards is Ownable, ReentrancyGuard {
         bytes32 ethSignedMessageHash = MessageHashUtils.toEthSignedMessageHash(messageHash);
         
         // Verify signature authenticity FIRST
-        if (ethSignedMessageHash.recover(signature) != backendSigner) revert InvalidSignature();
+        if (ethSignedMessageHash.recover(signature) != relayer) revert InvalidSignature();
         
         // Then check if already used
         if (usedSignatures[ethSignedMessageHash]) revert SignatureAlreadyUsed();

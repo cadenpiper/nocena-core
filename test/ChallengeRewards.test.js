@@ -5,7 +5,7 @@ describe("ChallengeRewards", function () {
   let nocenite;
   let challengeRewards;
   let owner;
-  let backendSigner;
+  let relayerSigner;
   let user1;
   let user2;
 
@@ -18,7 +18,7 @@ describe("ChallengeRewards", function () {
 
   // Deploy fresh contracts before each test
   beforeEach(async function () {
-    [owner, backendSigner, user1, user2] = await ethers.getSigners();
+    [owner, relayerSigner, user1, user2] = await ethers.getSigners();
     
     const NoceniteFactory = await ethers.getContractFactory("Nocenite");
     nocenite = await NoceniteFactory.deploy(owner.address);
@@ -27,7 +27,7 @@ describe("ChallengeRewards", function () {
     const ChallengeRewardsFactory = await ethers.getContractFactory("ChallengeRewards");
     challengeRewards = await ChallengeRewardsFactory.deploy(
       await nocenite.getAddress(),
-      backendSigner.address,
+      relayerSigner.address,
       owner.address
     );
     await challengeRewards.waitForDeployment();
@@ -36,8 +36,8 @@ describe("ChallengeRewards", function () {
     await nocenite.connect(owner).setMinter(await challengeRewards.getAddress());
   });
 
-  // Helper function to create valid backend signatures
-  async function createValidSignature(user, challengeType, ipfsHash, signer = backendSigner) {
+  // Helper function to create valid relayer signatures
+  async function createValidSignature(user, challengeType, ipfsHash, signer = relayerSigner) {
     const messageHash = ethers.AbiCoder.defaultAbiCoder().encode(
       ["address", "string", "string"],
       [user.address, challengeType, ipfsHash]
@@ -49,7 +49,7 @@ describe("ChallengeRewards", function () {
   describe("Deployment", function () {
     it("Should initialize with correct contract references", async function () {
       expect(await challengeRewards.nocenite()).to.equal(await nocenite.getAddress());
-      expect(await challengeRewards.backendSigner()).to.equal(backendSigner.address);
+      expect(await challengeRewards.relayer()).to.equal(relayerSigner.address);
     });
 
     it("Should set correct reward amounts", async function () {
@@ -61,13 +61,13 @@ describe("ChallengeRewards", function () {
     it("Should reject zero address parameters", async function () {
       const ChallengeRewardsFactory = await ethers.getContractFactory("ChallengeRewards");
       
-      await expect(ChallengeRewardsFactory.deploy(ethers.ZeroAddress, backendSigner.address, owner.address))
+      await expect(ChallengeRewardsFactory.deploy(ethers.ZeroAddress, relayerSigner.address, owner.address))
         .to.be.revertedWithCustomError(challengeRewards, "ZeroAddress");
       
       await expect(ChallengeRewardsFactory.deploy(await nocenite.getAddress(), ethers.ZeroAddress, owner.address))
         .to.be.revertedWithCustomError(challengeRewards, "ZeroAddress");
       
-      await expect(ChallengeRewardsFactory.deploy(await nocenite.getAddress(), backendSigner.address, ethers.ZeroAddress))
+      await expect(ChallengeRewardsFactory.deploy(await nocenite.getAddress(), relayerSigner.address, ethers.ZeroAddress))
         .to.be.revertedWithCustomError(challengeRewards, "OwnableInvalidOwner");
     });
   });
@@ -80,7 +80,7 @@ describe("ChallengeRewards", function () {
           const ipfsHash = `Qm${name}123`;
           const signature = await createValidSignature(user1, name, ipfsHash);
           
-          await expect(challengeRewards.connect(user1)[func](ipfsHash, signature))
+          await expect(challengeRewards.connect(relayerSigner)[func](user1.address, ipfsHash, signature))
             .to.emit(challengeRewards, "ChallengeCompleted")
             .withArgs(user1.address, name, ethers.parseEther(reward), ipfsHash);
           
@@ -91,12 +91,12 @@ describe("ChallengeRewards", function () {
           const ipfsHash1 = `Qm${name}123`;
           const signature1 = await createValidSignature(user1, name, ipfsHash1);
           
-          await challengeRewards.connect(user1)[func](ipfsHash1, signature1);
+          await challengeRewards.connect(relayerSigner)[func](user1.address, ipfsHash1, signature1);
           
           const ipfsHash2 = `Qm${name}456`;
           const signature2 = await createValidSignature(user1, name, ipfsHash2);
           
-          await expect(challengeRewards.connect(user1)[func](ipfsHash2, signature2))
+          await expect(challengeRewards.connect(relayerSigner)[func](user1.address, ipfsHash2, signature2))
             .to.be.revertedWithCustomError(challengeRewards, "CooldownActive");
         });
 
@@ -104,7 +104,7 @@ describe("ChallengeRewards", function () {
           const ipfsHash1 = `Qm${name}123`;
           const signature1 = await createValidSignature(user1, name, ipfsHash1);
           
-          await challengeRewards.connect(user1)[func](ipfsHash1, signature1);
+          await challengeRewards.connect(relayerSigner)[func](user1.address, ipfsHash1, signature1);
           
           await ethers.provider.send("evm_increaseTime", [duration]);
           await ethers.provider.send("evm_mine");
@@ -112,7 +112,7 @@ describe("ChallengeRewards", function () {
           const ipfsHash2 = `Qm${name}456`;
           const signature2 = await createValidSignature(user1, name, ipfsHash2);
           
-          await expect(challengeRewards.connect(user1)[func](ipfsHash2, signature2))
+          await expect(challengeRewards.connect(relayerSigner)[func](user1.address, ipfsHash2, signature2))
             .to.emit(challengeRewards, "ChallengeCompleted");
         });
       });
@@ -122,7 +122,7 @@ describe("ChallengeRewards", function () {
       const ipfsHash = "QmTest123";
       const signature = await createValidSignature(user1, "daily", ipfsHash);
       
-      const tx = await challengeRewards.connect(user1).completeDailyChallenge(ipfsHash, signature);
+      const tx = await challengeRewards.connect(relayerSigner).completeDailyChallenge(user1.address, ipfsHash, signature);
       const block = await ethers.provider.getBlock(tx.blockNumber);
       
       expect(await challengeRewards.lastClaim(user1.address, "daily")).to.equal(block.timestamp);
@@ -134,7 +134,7 @@ describe("ChallengeRewards", function () {
       ));
       
       for (let i = 0; i < challengeTypes.length; i++) {
-        await challengeRewards.connect(user1)[challengeTypes[i].func](`Qm${challengeTypes[i].name}123`, signatures[i]);
+        await challengeRewards.connect(relayerSigner)[challengeTypes[i].func](user1.address, `Qm${challengeTypes[i].name}123`, signatures[i]);
       }
       
       expect(await nocenite.balanceOf(user1.address)).to.equal(ethers.parseEther("3100"));
@@ -147,8 +147,8 @@ describe("ChallengeRewards", function () {
       const ipfsHash2 = "QmTest456";
       const signature2 = await createValidSignature(user2, "daily", ipfsHash2);
       
-      await challengeRewards.connect(user1).completeDailyChallenge(ipfsHash1, signature1);
-      await challengeRewards.connect(user2).completeDailyChallenge(ipfsHash2, signature2);
+      await challengeRewards.connect(relayerSigner).completeDailyChallenge(user1.address, ipfsHash1, signature1);
+      await challengeRewards.connect(relayerSigner).completeDailyChallenge(user2.address, ipfsHash2, signature2);
       
       expect(await nocenite.balanceOf(user1.address)).to.equal(ethers.parseEther("100"));
       expect(await nocenite.balanceOf(user2.address)).to.equal(ethers.parseEther("100"));
@@ -160,7 +160,7 @@ describe("ChallengeRewards", function () {
       const ipfsHash = "QmTest123";
       const signature = await createValidSignature(user1, "daily", ipfsHash, user2);
       
-      await expect(challengeRewards.connect(user1).completeDailyChallenge(ipfsHash, signature))
+      await expect(challengeRewards.connect(relayerSigner).completeDailyChallenge(user1.address, ipfsHash, signature))
         .to.be.revertedWithCustomError(challengeRewards, "InvalidSignature");
     });
 
@@ -168,58 +168,79 @@ describe("ChallengeRewards", function () {
       const ipfsHash = "QmTest123";
       const signature = await createValidSignature(user1, "daily", ipfsHash);
       
-      await challengeRewards.connect(user1).completeDailyChallenge(ipfsHash, signature);
+      await challengeRewards.connect(relayerSigner).completeDailyChallenge(user1.address, ipfsHash, signature);
       
       await ethers.provider.send("evm_increaseTime", [86400]);
       await ethers.provider.send("evm_mine");
       
-      await expect(challengeRewards.connect(user1).completeDailyChallenge(ipfsHash, signature))
+      await expect(challengeRewards.connect(relayerSigner).completeDailyChallenge(user1.address, ipfsHash, signature))
         .to.be.revertedWithCustomError(challengeRewards, "SignatureAlreadyUsed");
     });
 
     it("Should reject empty IPFS hashes", async function () {
       const signature = await createValidSignature(user1, "daily", "");
       
-      await expect(challengeRewards.connect(user1).completeDailyChallenge("", signature))
+      await expect(challengeRewards.connect(relayerSigner).completeDailyChallenge(user1.address, "", signature))
         .to.be.revertedWithCustomError(challengeRewards, "EmptyIPFSHash");
     });
 
     it("Should validate signature length", async function () {
-      await expect(challengeRewards.connect(user1).completeDailyChallenge("QmTest123", "0x1234"))
+      await expect(challengeRewards.connect(relayerSigner).completeDailyChallenge(user1.address, "QmTest123", "0x1234"))
         .to.be.revertedWithCustomError(challengeRewards, "InvalidSignatureLength");
+    });
+
+    it("Should prevent reusing the same IPFS hash globally", async function () {
+      const ipfsHash = "QmSameHash";
+      const sigUser1Daily = await createValidSignature(user1, "daily", ipfsHash);
+
+      // First claim with user1 daily
+      await challengeRewards.connect(relayerSigner).completeDailyChallenge(user1.address, ipfsHash, sigUser1Daily);
+
+      // Another user cannot reuse the same ipfsHash even for a different type
+      const sigUser2Weekly = await createValidSignature(user2, "weekly", ipfsHash);
+      await expect(challengeRewards.connect(relayerSigner).completeWeeklyChallenge(user2.address, ipfsHash, sigUser2Weekly))
+        .to.be.revertedWithCustomError(challengeRewards, "IPFSHashAlreadyUsed");
+
+      // Same user cannot reuse after cooldown either
+      await ethers.provider.send("evm_increaseTime", [86400]);
+      await ethers.provider.send("evm_mine");
+      const sigUser1Weekly = await createValidSignature(user1, "weekly", ipfsHash);
+      await expect(challengeRewards.connect(relayerSigner).completeWeeklyChallenge(user1.address, ipfsHash, sigUser1Weekly))
+        .to.be.revertedWithCustomError(challengeRewards, "IPFSHashAlreadyUsed");
     });
   });
 
-  describe("Backend Signer Management", function () {
-    it("Should allow owner to update backend signer", async function () {
-      await expect(challengeRewards.connect(owner).updateBackendSigner(user2.address))
-        .to.emit(challengeRewards, "BackendSignerUpdated")
-        .withArgs(backendSigner.address, user2.address);
+  describe("Relayer Management", function () {
+    it("Should allow owner to update relayer", async function () {
+      await expect(challengeRewards.connect(owner).updateRelayer(user2.address))
+        .to.emit(challengeRewards, "RelayerUpdated")
+        .withArgs(relayerSigner.address, user2.address);
       
-      expect(await challengeRewards.backendSigner()).to.equal(user2.address);
+      expect(await challengeRewards.relayer()).to.equal(user2.address);
     });
 
     it("Should invalidate old signatures after signer update", async function () {
       const ipfsHash = "QmTest123";
-      const oldSignature = await createValidSignature(user1, "daily", ipfsHash, backendSigner);
+      const oldSignature = await createValidSignature(user1, "daily", ipfsHash, relayerSigner);
       
-      await challengeRewards.connect(owner).updateBackendSigner(user2.address);
+      await challengeRewards.connect(owner).updateRelayer(user2.address);
       
-      await expect(challengeRewards.connect(user1).completeDailyChallenge(ipfsHash, oldSignature))
+      // Call using the new relayer (user2) so we pass the onlyRelayer check and hit signature verification
+      await expect(challengeRewards.connect(user2).completeDailyChallenge(user1.address, ipfsHash, oldSignature))
         .to.be.revertedWithCustomError(challengeRewards, "InvalidSignature");
       
       const newSignature = await createValidSignature(user1, "daily", ipfsHash, user2);
-      await expect(challengeRewards.connect(user1).completeDailyChallenge(ipfsHash, newSignature))
+      await expect(challengeRewards.connect(user2).completeDailyChallenge(user1.address, ipfsHash, newSignature))
         .to.emit(challengeRewards, "ChallengeCompleted");
     });
 
     it("Should reject unauthorized signer updates", async function () {
-      await expect(challengeRewards.connect(user1).updateBackendSigner(user2.address))
+      await expect(challengeRewards.connect(user1).updateRelayer(user2.address))
         .to.be.revertedWithCustomError(challengeRewards, "OwnableUnauthorizedAccount");
     });
 
     it("Should reject zero address as new signer", async function () {
-      await expect(challengeRewards.connect(owner).updateBackendSigner(ethers.ZeroAddress))
+      await expect(challengeRewards.connect(owner).updateRelayer(ethers.ZeroAddress))
         .to.be.revertedWithCustomError(challengeRewards, "ZeroAddress");
     });
   });

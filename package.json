@@ -1,18 +1,21 @@
 {
   "name": "nocena-core",
   "version": "1.0.0",
-  "description": "",
+  "description": "Smart contracts for the Nocena challenge completion platform",
   "main": "index.js",
   "scripts": {
     "test": "hardhat test",
-    "compile": "hardhat compile"
+    "compile": "hardhat compile",
+    "deploy:local": "hardhat run scripts/deploy.js --network localhost",
+    "deploy:flow": "hardhat run scripts/deploy.js --network flowEvmTestnet"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
+  "keywords": ["blockchain", "ethereum", "smart-contracts", "erc20", "challenges", "flow"],
+  "author": "Nocena",
+  "license": "UNLICENSED",
   "type": "commonjs",
   "devDependencies": {
     "@nomicfoundation/hardhat-toolbox": "^6.1.0",
+    "dotenv": "^17.2.3",
     "hardhat": "^2.26.3"
   },
   "dependencies": {
