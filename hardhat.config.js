@@ -8,7 +8,7 @@ module.exports = {
     settings: {
       optimizer: {
         enabled: true,
-        runs: 200
+        runs: 1000
       }
     }
   },
@@ -20,6 +20,12 @@ module.exports = {
     }
   },
   gasReporter: {
-    enabled: false
-  }
+    enabled: true,
+    currency: 'USD',
+    L2: "arbitrum", // Similar gas costs to Flow EVM
+    currencyDisplayPrecision: 5,
+    token: 'ETH',
+    coinmarketcap: process.env.COINMARKETCAP_API_KEY,
+    etherscan: process.env.ETHERSCAN_API_KEY,
+  },
 };
