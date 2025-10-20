@@ -28,6 +28,8 @@ contract ChallengeRewards is Ownable, ReentrancyGuard {
     error ZeroAddress();
     error NotRelayer();
     error IPFSHashAlreadyUsed();
+    error AmountExceedsMaximum();
+    error SelfReferentialChallenge();
     
     /// @dev The NCT token contract for minting rewards
     Nocenite public immutable nocenite;
@@ -116,6 +118,46 @@ contract ChallengeRewards is Ownable, ReentrancyGuard {
      */
     function completeMonthlyChallenge(address user, string calldata ipfsHash, bytes calldata signature) external nonReentrant onlyRelayer {
         _completeChallenge(user, "monthly", MONTH_DURATION, MONTHLY_REWARD, ipfsHash, signature);
+    }
+    
+    /**
+     * @dev Completes a private challenge with automatic 10% creator bonus
+     * @param recipient Address of the user who completed the challenge
+     * @param creator Address of the user who created the challenge
+     * @param recipientAmount Amount of NCT tokens to mint to recipient (max 250 NCT)
+     * @param ipfsHash IPFS hash of the challenge completion proof
+     * @param signature Relayer signature verifying challenge completion
+     */
+    function completePrivateChallenge(
+        address recipient, 
+        address creator, 
+        uint256 recipientAmount, 
+        string calldata ipfsHash, 
+        bytes calldata signature
+    ) external nonReentrant onlyRelayer {
+        if (bytes(ipfsHash).length == 0) revert EmptyIPFSHash();
+        if (signature.length != 65) revert InvalidSignatureLength();
+        if (recipient == address(0) || creator == address(0)) revert ZeroAddress();
+        if (recipientAmount == 0 || recipientAmount > 250e18) revert AmountExceedsMaximum();
+        if (recipient == creator) revert SelfReferentialChallenge();
+        
+        // Calculate 10% creator bonus with better precision
+        uint256 creatorAmount = (recipientAmount * 10) / 100;
+        
+        // Verify signature for the dual minting
+        _verifyCompletion(recipient, "private", ipfsHash, signature);
+        
+        // Prevent global reuse of the same IPFS hash
+        bytes32 ipfsKey = keccak256(bytes(ipfsHash));
+        if (usedIPFSHashes[ipfsKey]) revert IPFSHashAlreadyUsed();
+        usedIPFSHashes[ipfsKey] = true;
+        
+        // Mint to both recipient and creator
+        nocenite.mint(recipient, recipientAmount);
+        nocenite.mint(creator, creatorAmount);
+        
+        emit ChallengeCompleted(recipient, "private", recipientAmount, ipfsHash);
+        emit ChallengeCompleted(creator, "private-creator", creatorAmount, ipfsHash);
     }
     
     /**

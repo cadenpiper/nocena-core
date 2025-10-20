@@ -155,6 +155,204 @@ describe("ChallengeRewards", function () {
     });
   });
 
+  describe("Private Challenges", function () {
+    it("Should complete private challenge with dual minting", async function () {
+      const ipfsHash = "QmPrivate123";
+      const recipientAmount = ethers.parseEther("100");
+      const expectedCreatorAmount = ethers.parseEther("10"); // 10% of 100
+      const signature = await createValidSignature(user1, "private", ipfsHash);
+      
+      await expect(challengeRewards.connect(relayerSigner).completePrivateChallenge(user1.address, user2.address, recipientAmount, ipfsHash, signature))
+        .to.emit(challengeRewards, "ChallengeCompleted")
+        .withArgs(user1.address, "private", recipientAmount, ipfsHash)
+        .and.to.emit(challengeRewards, "ChallengeCompleted")
+        .withArgs(user2.address, "private-creator", expectedCreatorAmount, ipfsHash);
+      
+      expect(await nocenite.balanceOf(user1.address)).to.equal(recipientAmount);
+      expect(await nocenite.balanceOf(user2.address)).to.equal(expectedCreatorAmount);
+    });
+
+    it("Should allow maximum amount of 250 NCT", async function () {
+      const ipfsHash = "QmPrivateMax";
+      const maxAmount = ethers.parseEther("250");
+      const expectedCreatorAmount = ethers.parseEther("25"); // 10% of 250
+      const signature = await createValidSignature(user1, "private", ipfsHash);
+      
+      await expect(challengeRewards.connect(relayerSigner).completePrivateChallenge(user1.address, user2.address, maxAmount, ipfsHash, signature))
+        .to.emit(challengeRewards, "ChallengeCompleted");
+      
+      expect(await nocenite.balanceOf(user1.address)).to.equal(maxAmount);
+      expect(await nocenite.balanceOf(user2.address)).to.equal(expectedCreatorAmount);
+    });
+
+    it("Should reject amounts exceeding 250 NCT", async function () {
+      const ipfsHash = "QmPrivateExcess";
+      const excessAmount = ethers.parseEther("251");
+      const signature = await createValidSignature(user1, "private", ipfsHash);
+      
+      await expect(challengeRewards.connect(relayerSigner).completePrivateChallenge(user1.address, user2.address, excessAmount, ipfsHash, signature))
+        .to.be.revertedWithCustomError(challengeRewards, "AmountExceedsMaximum");
+    });
+
+    it("Should reject zero amounts", async function () {
+      const ipfsHash = "QmPrivateZero";
+      const zeroAmount = ethers.parseEther("0");
+      const signature = await createValidSignature(user1, "private", ipfsHash);
+      
+      await expect(challengeRewards.connect(relayerSigner).completePrivateChallenge(user1.address, user2.address, zeroAmount, ipfsHash, signature))
+        .to.be.revertedWithCustomError(challengeRewards, "AmountExceedsMaximum");
+    });
+
+    it("Should reject zero address recipient", async function () {
+      const ipfsHash = "QmPrivateZeroRecipient";
+      const amount = ethers.parseEther("100");
+      const signature = await createValidSignature(user1, "private", ipfsHash);
+      
+      await expect(challengeRewards.connect(relayerSigner).completePrivateChallenge(ethers.ZeroAddress, user2.address, amount, ipfsHash, signature))
+        .to.be.revertedWithCustomError(challengeRewards, "ZeroAddress");
+    });
+
+    it("Should reject zero address creator", async function () {
+      const ipfsHash = "QmPrivateZeroCreator";
+      const amount = ethers.parseEther("100");
+      const signature = await createValidSignature(user1, "private", ipfsHash);
+      
+      await expect(challengeRewards.connect(relayerSigner).completePrivateChallenge(user1.address, ethers.ZeroAddress, amount, ipfsHash, signature))
+        .to.be.revertedWithCustomError(challengeRewards, "ZeroAddress");
+    });
+
+    it("Should reject self-referential challenges", async function () {
+      const ipfsHash = "QmPrivateSelf";
+      const amount = ethers.parseEther("100");
+      const signature = await createValidSignature(user1, "private", ipfsHash);
+      
+      await expect(challengeRewards.connect(relayerSigner).completePrivateChallenge(user1.address, user1.address, amount, ipfsHash, signature))
+        .to.be.revertedWithCustomError(challengeRewards, "SelfReferentialChallenge");
+    });
+
+    it("Should calculate creator bonus with proper precision", async function () {
+      const ipfsHash = "QmPrivatePrecision";
+      const recipientAmount = ethers.parseEther("99"); // Test edge case
+      const expectedCreatorAmount = (recipientAmount * 10n) / 100n; // Should be 9.9 NCT
+      const signature = await createValidSignature(user1, "private", ipfsHash);
+      
+      await challengeRewards.connect(relayerSigner).completePrivateChallenge(user1.address, user2.address, recipientAmount, ipfsHash, signature);
+      
+      expect(await nocenite.balanceOf(user1.address)).to.equal(recipientAmount);
+      expect(await nocenite.balanceOf(user2.address)).to.equal(expectedCreatorAmount);
+    });
+
+    it("Should handle small amounts correctly", async function () {
+      const ipfsHash = "QmPrivateSmall";
+      const recipientAmount = ethers.parseEther("1"); // 1 NCT
+      const expectedCreatorAmount = ethers.parseEther("0.1"); // 0.1 NCT
+      const signature = await createValidSignature(user1, "private", ipfsHash);
+      
+      await challengeRewards.connect(relayerSigner).completePrivateChallenge(user1.address, user2.address, recipientAmount, ipfsHash, signature);
+      
+      expect(await nocenite.balanceOf(user1.address)).to.equal(recipientAmount);
+      expect(await nocenite.balanceOf(user2.address)).to.equal(expectedCreatorAmount);
+    });
+
+    it("Should allow multiple private challenges without cooldown", async function () {
+      const ipfsHash1 = "QmPrivate1";
+      const ipfsHash2 = "QmPrivate2";
+      const amount = ethers.parseEther("50");
+      const expectedCreatorAmount = ethers.parseEther("5");
+      const signature1 = await createValidSignature(user1, "private", ipfsHash1);
+      const signature2 = await createValidSignature(user1, "private", ipfsHash2);
+      
+      await challengeRewards.connect(relayerSigner).completePrivateChallenge(user1.address, user2.address, amount, ipfsHash1, signature1);
+      await challengeRewards.connect(relayerSigner).completePrivateChallenge(user1.address, user2.address, amount, ipfsHash2, signature2);
+      
+      expect(await nocenite.balanceOf(user1.address)).to.equal(ethers.parseEther("100"));
+      expect(await nocenite.balanceOf(user2.address)).to.equal(ethers.parseEther("10"));
+    });
+
+    it("Should prevent IPFS hash reuse", async function () {
+      const ipfsHash = "QmPrivateReuse";
+      const amount = ethers.parseEther("100");
+      const signature1 = await createValidSignature(user1, "private", ipfsHash);
+      const signature2 = await createValidSignature(user2, "private", ipfsHash);
+      
+      await challengeRewards.connect(relayerSigner).completePrivateChallenge(user1.address, user2.address, amount, ipfsHash, signature1);
+      
+      await expect(challengeRewards.connect(relayerSigner).completePrivateChallenge(user2.address, user1.address, amount, ipfsHash, signature2))
+        .to.be.revertedWithCustomError(challengeRewards, "IPFSHashAlreadyUsed");
+    });
+
+    it("Should prevent signature replay attacks", async function () {
+      const ipfsHash1 = "QmPrivateReplay1";
+      const ipfsHash2 = "QmPrivateReplay2";
+      const amount = ethers.parseEther("100");
+      const signature = await createValidSignature(user1, "private", ipfsHash1);
+      
+      await challengeRewards.connect(relayerSigner).completePrivateChallenge(user1.address, user2.address, amount, ipfsHash1, signature);
+      
+      // Try to reuse same signature with different IPFS hash
+      await expect(challengeRewards.connect(relayerSigner).completePrivateChallenge(user1.address, user2.address, amount, ipfsHash2, signature))
+        .to.be.revertedWithCustomError(challengeRewards, "InvalidSignature");
+    });
+
+    it("Should reject invalid signatures", async function () {
+      const ipfsHash = "QmPrivateInvalid";
+      const amount = ethers.parseEther("100");
+      const signature = await createValidSignature(user1, "private", ipfsHash, user2); // Wrong signer
+      
+      await expect(challengeRewards.connect(relayerSigner).completePrivateChallenge(user1.address, user2.address, amount, ipfsHash, signature))
+        .to.be.revertedWithCustomError(challengeRewards, "InvalidSignature");
+    });
+
+    it("Should reject calls from non-relayer", async function () {
+      const ipfsHash = "QmPrivateNonRelayer";
+      const amount = ethers.parseEther("100");
+      const signature = await createValidSignature(user1, "private", ipfsHash);
+      
+      await expect(challengeRewards.connect(user1).completePrivateChallenge(user1.address, user2.address, amount, ipfsHash, signature))
+        .to.be.revertedWithCustomError(challengeRewards, "NotRelayer");
+    });
+
+    it("Should reject empty IPFS hash", async function () {
+      const amount = ethers.parseEther("100");
+      const signature = await createValidSignature(user1, "private", "");
+      
+      await expect(challengeRewards.connect(relayerSigner).completePrivateChallenge(user1.address, user2.address, amount, "", signature))
+        .to.be.revertedWithCustomError(challengeRewards, "EmptyIPFSHash");
+    });
+
+    it("Should reject invalid signature length", async function () {
+      const ipfsHash = "QmPrivateInvalidLength";
+      const amount = ethers.parseEther("100");
+      
+      await expect(challengeRewards.connect(relayerSigner).completePrivateChallenge(user1.address, user2.address, amount, ipfsHash, "0x1234"))
+        .to.be.revertedWithCustomError(challengeRewards, "InvalidSignatureLength");
+    });
+
+    it("Should handle different recipient-creator pairs", async function () {
+      const ipfsHash1 = "QmPrivatePair1";
+      const ipfsHash2 = "QmPrivatePair2";
+      const amount = ethers.parseEther("100");
+      const expectedCreatorAmount = ethers.parseEther("10");
+      
+      // Get additional signers for testing
+      const [, , , , user3, user4] = await ethers.getSigners();
+      
+      const signature1 = await createValidSignature(user1, "private", ipfsHash1);
+      const signature2 = await createValidSignature(user3, "private", ipfsHash2);
+      
+      // First pair: user1 recipient, user2 creator
+      await challengeRewards.connect(relayerSigner).completePrivateChallenge(user1.address, user2.address, amount, ipfsHash1, signature1);
+      
+      // Second pair: user3 recipient, user4 creator
+      await challengeRewards.connect(relayerSigner).completePrivateChallenge(user3.address, user4.address, amount, ipfsHash2, signature2);
+      
+      expect(await nocenite.balanceOf(user1.address)).to.equal(amount);
+      expect(await nocenite.balanceOf(user2.address)).to.equal(expectedCreatorAmount);
+      expect(await nocenite.balanceOf(user3.address)).to.equal(amount);
+      expect(await nocenite.balanceOf(user4.address)).to.equal(expectedCreatorAmount);
+    });
+  });
+
   describe("Security Validation", function () {
     it("Should reject invalid signatures", async function () {
       const ipfsHash = "QmTest123";

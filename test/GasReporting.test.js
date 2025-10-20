@@ -56,5 +56,10 @@ describe("Gas Reporting", function () {
       const signature = await createValidSignature(user1, "monthly", "QmTest");
       await challengeRewards.connect(relayerSigner).completeMonthlyChallenge(user1.address, "QmTest", signature);
     });
+
+    it("Private challenge completion", async function () {
+      const signature = await createValidSignature(user1, "private", "QmTest");
+      await challengeRewards.connect(relayerSigner).completePrivateChallenge(user1.address, relayerSigner.address, ethers.parseEther("100"), "QmTest", signature);
+    });
   });
 });
