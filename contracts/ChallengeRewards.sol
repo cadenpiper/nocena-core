@@ -161,6 +161,35 @@ contract ChallengeRewards is Ownable, ReentrancyGuard {
     }
     
     /**
+     * @dev Completes a public challenge with variable reward amount
+     * @param user Address of the user who completed the challenge
+     * @param rewardAmount Amount of NCT tokens to mint
+     * @param ipfsHash IPFS hash of the challenge completion proof
+     * @param signature Relayer signature verifying challenge completion
+     */
+    function completePublicChallenge(
+        address user,
+        uint256 rewardAmount,
+        string calldata ipfsHash,
+        bytes calldata signature
+    ) external nonReentrant onlyRelayer {
+        if (bytes(ipfsHash).length == 0) revert EmptyIPFSHash();
+        if (signature.length != 65) revert InvalidSignatureLength();
+        if (user == address(0)) revert ZeroAddress();
+        if (rewardAmount == 0 || rewardAmount > 1000e18) revert AmountExceedsMaximum();
+        
+        _verifyCompletion(user, "public", ipfsHash, signature);
+        
+        bytes32 ipfsKey = keccak256(bytes(ipfsHash));
+        if (usedIPFSHashes[ipfsKey]) revert IPFSHashAlreadyUsed();
+        usedIPFSHashes[ipfsKey] = true;
+        
+        nocenite.mint(user, rewardAmount);
+        
+        emit ChallengeCompleted(user, "public", rewardAmount, ipfsHash);
+    }
+    
+    /**
      * @dev Internal function to process challenge completion
      * @param challengeType Type of challenge ("daily", "weekly", "monthly")
      * @param duration Cooldown duration for this challenge type

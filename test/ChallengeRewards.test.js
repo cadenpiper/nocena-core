@@ -408,6 +408,103 @@ describe("ChallengeRewards", function () {
     });
   });
 
+  describe("Public Challenge Completion", function () {
+    const testRewardAmount = ethers.parseEther("75"); // 75 NCT
+    const testIpfsHash = "QmPublicTest123";
+
+    it("Should complete public challenge successfully", async function () {
+      const signature = await createValidSignature(user1, "public", testIpfsHash);
+      
+      await expect(challengeRewards.connect(relayerSigner).completePublicChallenge(
+        user1.address,
+        testRewardAmount,
+        testIpfsHash,
+        signature
+      ))
+        .to.emit(challengeRewards, "ChallengeCompleted")
+        .withArgs(user1.address, "public", testRewardAmount, testIpfsHash);
+
+      expect(await nocenite.balanceOf(user1.address)).to.equal(testRewardAmount);
+    });
+
+    it("Should allow variable reward amounts", async function () {
+      const rewards = [
+        ethers.parseEther("60"),   // Minimum expected
+        ethers.parseEther("100"),  // Mid-range
+        ethers.parseEther("150"),  // High-range
+        ethers.parseEther("200")   // Above typical range
+      ];
+
+      for (let i = 0; i < rewards.length; i++) {
+        const ipfsHash = `QmPublicVar${i}`;
+        const signature = await createValidSignature(user1, "public", ipfsHash);
+        
+        await challengeRewards.connect(relayerSigner).completePublicChallenge(
+          user1.address,
+          rewards[i],
+          ipfsHash,
+          signature
+        );
+      }
+
+      const expectedTotal = rewards.reduce((sum, reward) => sum + reward, 0n);
+      expect(await nocenite.balanceOf(user1.address)).to.equal(expectedTotal);
+    });
+
+    it("Should prevent zero reward amount", async function () {
+      const signature = await createValidSignature(user1, "public", testIpfsHash);
+      
+      await expect(challengeRewards.connect(relayerSigner).completePublicChallenge(
+        user1.address,
+        0,
+        testIpfsHash,
+        signature
+      )).to.be.revertedWithCustomError(challengeRewards, "AmountExceedsMaximum");
+    });
+
+    it("Should prevent excessive reward amounts", async function () {
+      const excessiveAmount = ethers.parseEther("1001"); // Above 1000 NCT limit
+      const signature = await createValidSignature(user1, "public", testIpfsHash);
+      
+      await expect(challengeRewards.connect(relayerSigner).completePublicChallenge(
+        user1.address,
+        excessiveAmount,
+        testIpfsHash,
+        signature
+      )).to.be.revertedWithCustomError(challengeRewards, "AmountExceedsMaximum");
+    });
+
+    it("Should prevent IPFS hash reuse", async function () {
+      const signature1 = await createValidSignature(user1, "public", testIpfsHash);
+      const signature2 = await createValidSignature(user2, "public", testIpfsHash);
+      
+      await challengeRewards.connect(relayerSigner).completePublicChallenge(
+        user1.address,
+        testRewardAmount,
+        testIpfsHash,
+        signature1
+      );
+
+      await expect(challengeRewards.connect(relayerSigner).completePublicChallenge(
+        user2.address,
+        testRewardAmount,
+        testIpfsHash,
+        signature2
+      )).to.be.revertedWithCustomError(challengeRewards, "IPFSHashAlreadyUsed");
+    });
+
+    it("Should reject invalid signatures", async function () {
+      const invalidSignature = await createValidSignature(user1, "public", testIpfsHash, user2);
+      
+      await expect(challengeRewards.connect(relayerSigner).completePublicChallenge(
+        user1.address,
+        testRewardAmount,
+        testIpfsHash,
+        invalidSignature
+      )).to.be.revertedWithCustomError(challengeRewards, "InvalidSignature");
+    });
+  });
+
   describe("Relayer Management", function () {
     it("Should allow owner to update relayer", async function () {
       await expect(challengeRewards.connect(owner).updateRelayer(user2.address))
