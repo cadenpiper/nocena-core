@@ -20,7 +20,7 @@ module.exports = {
     }
   },
   gasReporter: {
-    enabled: true,
+    enabled: false,
     currency: 'USD',
     L2: "arbitrum", // Similar gas costs to Flow EVM
     currencyDisplayPrecision: 5,
