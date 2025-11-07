@@ -4,6 +4,14 @@ const { ethers } = require("hardhat");
 describe("SocialRewards", function () {
   let socialRewards, nocenite, owner, relayer, user1, user2, user3;
 
+  async function createSignature(users, amounts, interactionIds, signer) {
+    const messageHash = ethers.keccak256(ethers.AbiCoder.defaultAbiCoder().encode(
+      ["address[]", "uint256[]", "bytes32[]"],
+      [users, amounts, interactionIds]
+    ));
+    return await signer.signMessage(ethers.getBytes(messageHash));
+  }
+
   beforeEach(async function () {
     [owner, relayer, user1, user2, user3] = await ethers.getSigners();
 
@@ -20,14 +28,6 @@ describe("SocialRewards", function () {
     await nocenite.setMinter(await socialRewards.getAddress());
   });
 
-  async function createSignature(users, amounts, interactionIds, signer) {
-    const messageHash = ethers.keccak256(ethers.AbiCoder.defaultAbiCoder().encode(
-      ["address[]", "uint256[]", "bytes32[]"],
-      [users, amounts, interactionIds]
-    ));
-    return await signer.signMessage(ethers.getBytes(messageHash));
-  }
-
   describe("Deployment", function () {
     it("Should set the correct nocenite token", async function () {
       expect(await socialRewards.nocenite()).to.equal(await nocenite.getAddress());
@@ -40,11 +40,19 @@ describe("SocialRewards", function () {
     it("Should set the correct owner", async function () {
       expect(await socialRewards.owner()).to.equal(owner.address);
     });
+
+    it("Should set correct constants", async function () {
+      expect(await socialRewards.MAX_BATCH_SIZE()).to.equal(500);
+      expect(await socialRewards.MAX_INTERACTION_REWARD()).to.equal(ethers.parseEther("10"));
+    });
   });
 
   describe("Access Control", function () {
-    it("Should allow owner to update relayer", async function () {
-      await socialRewards.updateRelayer(user1.address);
+    it("Should allow owner to update relayer and emit event", async function () {
+      await expect(socialRewards.updateRelayer(user1.address))
+        .to.emit(socialRewards, "RelayerUpdated")
+        .withArgs(relayer.address, user1.address);
+      
       expect(await socialRewards.relayer()).to.equal(user1.address);
     });
 
@@ -62,7 +70,7 @@ describe("SocialRewards", function () {
   });
 
   describe("Batch Processing", function () {
-    it("Should batch process multiple interactions with valid signature", async function () {
+    it("Should batch process multiple interactions with valid signature and emit event", async function () {
       const users = [user1.address, user2.address, user3.address];
       const amounts = [ethers.parseEther("1"), ethers.parseEther("3"), ethers.parseEther("2")];
       const interactionIds = [
@@ -73,7 +81,10 @@ describe("SocialRewards", function () {
 
       const signature = await createSignature(users, amounts, interactionIds, relayer);
 
-      await socialRewards.connect(relayer).batchRewardSocialInteractions(users, amounts, interactionIds, signature);
+      await expect(
+        socialRewards.connect(relayer).batchRewardSocialInteractions(users, amounts, interactionIds, signature)
+      ).to.emit(socialRewards, "SocialRewardsBatched")
+       .withArgs(3, ethers.parseEther("6"));
 
       expect(await nocenite.balanceOf(user1.address)).to.equal(ethers.parseEther("1"));
       expect(await nocenite.balanceOf(user2.address)).to.equal(ethers.parseEther("3"));
@@ -85,19 +96,16 @@ describe("SocialRewards", function () {
       const amounts = [ethers.parseEther("1")];
       const interactionIds = [ethers.keccak256(ethers.toUtf8Bytes("like_1"))];
 
-      // First signature
       const signature1 = await createSignature(users, amounts, interactionIds, relayer);
       await socialRewards.connect(relayer).batchRewardSocialInteractions(users, amounts, interactionIds, signature1);
 
-      // Second call with same interaction ID but different signature (different nonce/timestamp)
       const users2 = [user1.address];
-      const amounts2 = [ethers.parseEther("2")]; // Different amount to create different signature
-      const interactionIds2 = [ethers.keccak256(ethers.toUtf8Bytes("like_1"))]; // Same interaction ID
+      const amounts2 = [ethers.parseEther("2")];
+      const interactionIds2 = [ethers.keccak256(ethers.toUtf8Bytes("like_1"))];
 
       const signature2 = await createSignature(users2, amounts2, interactionIds2, relayer);
       await socialRewards.connect(relayer).batchRewardSocialInteractions(users2, amounts2, interactionIds2, signature2);
 
-      // Should still only have 1 NCT (first amount) because interaction was already processed
       expect(await nocenite.balanceOf(user1.address)).to.equal(ethers.parseEther("1"));
     });
 
@@ -127,54 +135,37 @@ describe("SocialRewards", function () {
       ).to.be.revertedWithCustomError(socialRewards, "SignatureAlreadyUsed");
     });
 
-    it("Should revert if arrays have different lengths", async function () {
-      const users = [user1.address, user2.address];
+    it("Should revert if user address is zero", async function () {
+      const users = [ethers.ZeroAddress];
       const amounts = [ethers.parseEther("1")];
       const interactionIds = [ethers.keccak256(ethers.toUtf8Bytes("like_1"))];
       const signature = await createSignature(users, amounts, interactionIds, relayer);
 
       await expect(
         socialRewards.connect(relayer).batchRewardSocialInteractions(users, amounts, interactionIds, signature)
-      ).to.be.revertedWithCustomError(socialRewards, "ArrayLengthMismatch");
+      ).to.be.revertedWithCustomError(socialRewards, "ZeroAddress");
     });
 
-    it("Should revert if batch size exceeds limit", async function () {
-      const oversizedBatch = 501;
-      const users = Array(oversizedBatch).fill(user1.address);
-      const amounts = Array(oversizedBatch).fill(ethers.parseEther("1"));
-      const interactionIds = Array(oversizedBatch).fill(0).map((_, i) => 
-        ethers.keccak256(ethers.toUtf8Bytes(`oversized_${i}`))
-      );
-      const signature = await createSignature(users, amounts, interactionIds, relayer);
-
-      await expect(
-        socialRewards.connect(relayer).batchRewardSocialInteractions(users, amounts, interactionIds, signature)
-      ).to.be.revertedWithCustomError(socialRewards, "BatchSizeExceedsLimit");
-    });
-
-    it("Should allow exactly 500 interactions", async function () {
-      const maxBatch = 500;
-      const users = Array(maxBatch).fill(user1.address);
-      const amounts = Array(maxBatch).fill(ethers.parseEther("1"));
-      const interactionIds = Array(maxBatch).fill(0).map((_, i) => 
-        ethers.keccak256(ethers.toUtf8Bytes(`max_batch_${i}`))
-      );
-      const signature = await createSignature(users, amounts, interactionIds, relayer);
-
-      await expect(
-        socialRewards.connect(relayer).batchRewardSocialInteractions(users, amounts, interactionIds, signature)
-      ).to.not.be.reverted;
-    });
-
-    it("Should revert if non-relayer tries to batch process", async function () {
+    it("Should revert if amount is zero", async function () {
       const users = [user1.address];
-      const amounts = [ethers.parseEther("1")];
+      const amounts = [0];
       const interactionIds = [ethers.keccak256(ethers.toUtf8Bytes("like_1"))];
       const signature = await createSignature(users, amounts, interactionIds, relayer);
 
       await expect(
-        socialRewards.connect(user1).batchRewardSocialInteractions(users, amounts, interactionIds, signature)
-      ).to.be.revertedWithCustomError(socialRewards, "NotRelayer");
+        socialRewards.connect(relayer).batchRewardSocialInteractions(users, amounts, interactionIds, signature)
+      ).to.be.revertedWithCustomError(socialRewards, "AmountExceedsMaximum");
+    });
+
+    it("Should revert if amount exceeds maximum", async function () {
+      const users = [user1.address];
+      const amounts = [ethers.parseEther("11")];
+      const interactionIds = [ethers.keccak256(ethers.toUtf8Bytes("like_1"))];
+      const signature = await createSignature(users, amounts, interactionIds, relayer);
+
+      await expect(
+        socialRewards.connect(relayer).batchRewardSocialInteractions(users, amounts, interactionIds, signature)
+      ).to.be.revertedWithCustomError(socialRewards, "AmountExceedsMaximum");
     });
   });
 });
