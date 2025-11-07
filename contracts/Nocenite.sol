@@ -9,7 +9,7 @@ import "@openzeppelin/contracts/access/Ownable.sol";
  * @dev ERC20 token for the Nocena challenge completion platform
  * 
  * NCT tokens are earned by users completing daily, weekly, and monthly challenges.
- * The contract uses a single authorized minter pattern for security and gas efficiency.
+ * The contract uses multiple authorized minters for different reward systems.
  * Ownership can be permanently renounced to achieve full decentralization.
  */
 contract Nocenite is ERC20, Ownable {
@@ -20,16 +20,15 @@ contract Nocenite is ERC20, Ownable {
     error CannotMintToZeroAddress();
     error AmountMustBeGreaterThanZero();
     error OwnershipAlreadyRenounced();
-    error MustSetMinterFirst();
     
-    /// @dev Address authorized to mint tokens (typically the NocenaCore contract)
-    address public minter;
+    /// @dev Tracks authorized minter contracts
+    mapping(address => bool) public authorizedMinters;
     
     /// @dev Tracks if ownership has been permanently renounced
     bool public ownershipRenounced = false;
     
-    /// @dev Emitted when the authorized minter is updated
-    event MinterSet(address indexed minter);
+    /// @dev Emitted when a minter authorization is updated
+    event MinterUpdated(address indexed minter, bool authorized);
     
     /// @dev Emitted when ownership is permanently renounced
     event OwnershipRenounced();
@@ -41,10 +40,10 @@ contract Nocenite is ERC20, Ownable {
     constructor(address initialOwner) ERC20("Nocenite", "NCT") Ownable(initialOwner) {}
     
     /**
-     * @dev Restricts function access to the authorized minter only
+     * @dev Restricts function access to authorized minters only
      */
     modifier onlyMinter() {
-        if (msg.sender != minter) revert OnlyMinterCanMint();
+        if (!authorizedMinters[msg.sender]) revert OnlyMinterCanMint();
         _;
     }
     
@@ -60,22 +59,33 @@ contract Nocenite is ERC20, Ownable {
     }
     
     /**
-     * @dev Sets the authorized minter address
-     * @param _minter Address to authorize for minting tokens
+     * @dev Authorizes or deauthorizes a minter contract
+     * @param _minter Address of the minter contract
+     * @param _authorized Whether to authorize or deauthorize
      */
-    function setMinter(address _minter) external onlyOwner {
+    function setMinter(address _minter, bool _authorized) external onlyOwner {
         if (_minter == address(0)) revert CannotSetZeroAddressAsMinter();
         if (ownershipRenounced) revert OwnershipAlreadyRenounced();
-        minter = _minter;
-        emit MinterSet(_minter);
+        authorizedMinters[_minter] = _authorized;
+        emit MinterUpdated(_minter, _authorized);
+    }
+    
+    /**
+     * @dev Legacy function for backward compatibility - authorizes a minter
+     * @param _minter Address to authorize for minting tokens
+     */
+    function addMinter(address _minter) external onlyOwner {
+        if (_minter == address(0)) revert CannotSetZeroAddressAsMinter();
+        if (ownershipRenounced) revert OwnershipAlreadyRenounced();
+        authorizedMinters[_minter] = true;
+        emit MinterUpdated(_minter, true);
     }
     
     /**
      * @dev Permanently renounces ownership, making the contract fully decentralized
-     * @notice This action cannot be undone. Ensure minter is set before calling.
+     * @notice This action cannot be undone. Ensure minters are authorized before calling.
      */
     function renounceOwnership() public override onlyOwner {
-        if (minter == address(0)) revert MustSetMinterFirst();
         ownershipRenounced = true;
         super.renounceOwnership();
         emit OwnershipRenounced();

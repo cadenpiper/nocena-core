@@ -28,7 +28,7 @@ describe("Nocenite Token", function () {
     });
 
     it("Should start with no minter configured", async function () {
-      expect(await nocenite.minter()).to.equal(ethers.ZeroAddress);
+      expect(await nocenite.authorizedMinters(minter.address)).to.be.false;
     });
 
     it("Should start with ownership active", async function () {
@@ -38,28 +38,28 @@ describe("Nocenite Token", function () {
 
   describe("Minter Management", function () {
     it("Should allow owner to set authorized minter", async function () {
-      await expect(nocenite.connect(owner).setMinter(minter.address))
-        .to.emit(nocenite, "MinterSet")
-        .withArgs(minter.address);
+      await expect(nocenite.connect(owner).setMinter(minter.address, true))
+        .to.emit(nocenite, "MinterUpdated")
+        .withArgs(minter.address, true);
       
-      expect(await nocenite.minter()).to.equal(minter.address);
+      expect(await nocenite.authorizedMinters(minter.address)).to.equal(true);
     });
 
     it("Should reject minter assignment from non-owner", async function () {
-      await expect(nocenite.connect(unauthorized).setMinter(minter.address))
+      await expect(nocenite.connect(unauthorized).setMinter(minter.address, true))
         .to.be.revertedWithCustomError(nocenite, "OwnableUnauthorizedAccount");
     });
 
     it("Should reject zero address as minter", async function () {
-      await expect(nocenite.connect(owner).setMinter(ethers.ZeroAddress))
+      await expect(nocenite.connect(owner).setMinter(ethers.ZeroAddress, true))
         .to.be.revertedWithCustomError(nocenite, "CannotSetZeroAddressAsMinter");
     });
 
     it("Should prevent minter changes after ownership renouncement", async function () {
-      await nocenite.connect(owner).setMinter(minter.address);
+      await nocenite.connect(owner).setMinter(minter.address, true);
       await nocenite.connect(owner).renounceOwnership();
       
-      await expect(nocenite.connect(owner).setMinter(user.address))
+      await expect(nocenite.connect(owner).setMinter(user.address, true))
         .to.be.revertedWithCustomError(nocenite, "OwnableUnauthorizedAccount");
     });
   });
@@ -67,7 +67,7 @@ describe("Nocenite Token", function () {
   describe("Token Minting", function () {
     // Set up authorized minter for all minting tests
     beforeEach(async function () {
-      await nocenite.connect(owner).setMinter(minter.address);
+      await nocenite.connect(owner).setMinter(minter.address, true);
     });
 
     it("Should allow authorized minter to mint tokens", async function () {
@@ -118,14 +118,7 @@ describe("Nocenite Token", function () {
   });
 
   describe("Ownership Renouncement", function () {
-    it("Should require minter to be set before renouncing", async function () {
-      await expect(nocenite.connect(owner).renounceOwnership())
-        .to.be.revertedWithCustomError(nocenite, "MustSetMinterFirst");
-    });
-
-    it("Should allow ownership renouncement when minter is set", async function () {
-      await nocenite.connect(owner).setMinter(minter.address);
-      
+    it("Should allow ownership renouncement", async function () {
       await expect(nocenite.connect(owner).renounceOwnership())
         .to.emit(nocenite, "OwnershipRenounced");
       
@@ -134,7 +127,7 @@ describe("Nocenite Token", function () {
     });
 
     it("Should preserve minting functionality after renouncement", async function () {
-      await nocenite.connect(owner).setMinter(minter.address);
+      await nocenite.connect(owner).setMinter(minter.address, true);
       await nocenite.connect(owner).renounceOwnership();
       
       const amount = ethers.parseEther("100");
@@ -144,7 +137,7 @@ describe("Nocenite Token", function () {
     });
 
     it("Should reject renouncement from non-owner", async function () {
-      await nocenite.connect(owner).setMinter(minter.address);
+      await nocenite.connect(owner).setMinter(minter.address, true);
       
       await expect(nocenite.connect(unauthorized).renounceOwnership())
         .to.be.revertedWithCustomError(nocenite, "OwnableUnauthorizedAccount");

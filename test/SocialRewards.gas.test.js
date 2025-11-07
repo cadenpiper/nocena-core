@@ -26,7 +26,7 @@ describe("SocialRewards Gas Efficiency", function () {
       owner.address
     );
 
-    await nocenite.setMinter(await socialRewards.getAddress());
+    await nocenite.setMinter(await socialRewards.getAddress(), true);
   });
 
   it("Should demonstrate gas efficiency of batch processing", async function () {

@@ -25,7 +25,7 @@ describe("SocialRewards", function () {
       owner.address
     );
 
-    await nocenite.setMinter(await socialRewards.getAddress());
+    await nocenite.setMinter(await socialRewards.getAddress(), true);
   });
 
   describe("Deployment", function () {

@@ -53,7 +53,7 @@ describe("Gas Reporting", function () {
     await socialRewards.waitForDeployment();
     
     // Set ChallengeRewards as authorized minter
-    await nocenite.setMinter(await challengeRewards.getAddress());
+    await nocenite.setMinter(await challengeRewards.getAddress(), true);
   });
 
   describe("Challenge Rewards Gas Usage", function () {
@@ -81,7 +81,7 @@ describe("Gas Reporting", function () {
   describe("Social Rewards Gas Usage", function () {
     beforeEach(async function () {
       // Set SocialRewards as authorized minter for these tests
-      await nocenite.setMinter(await socialRewards.getAddress());
+      await nocenite.setMinter(await socialRewards.getAddress(), true);
     });
 
     it("Single social interaction", async function () {

@@ -33,7 +33,7 @@ describe("ChallengeRewards", function () {
     await challengeRewards.waitForDeployment();
     
     // Set ChallengeRewards as authorized minter
-    await nocenite.connect(owner).setMinter(await challengeRewards.getAddress());
+    await nocenite.connect(owner).setMinter(await challengeRewards.getAddress(), true);
   });
 
   // Helper function to create valid relayer signatures
